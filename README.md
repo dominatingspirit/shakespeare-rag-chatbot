@@ -57,7 +57,6 @@ style of William Shakespeare, grounded in his complete works.
    \`\`\`
    streamlit run app.py
    \`\`\`
+## Screenshot
 
-## Screenshots
-
-(add a screenshot of your themed UI here)
+![Shakespeare AI UI]('Screenshotui/Screenshot 2026-06-13 at 1.03.26 PM.png')
