@@ -5,3 +5,4 @@ sentence-transformers
 chromadb==0.5.23
 protobuf==4.25.3
 langchain-text-splitters
+tokenizers<0.20
