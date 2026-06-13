@@ -4,7 +4,10 @@ load_dotenv()
 
 from groq import Groq
 from sentence_transformers import SentenceTransformer
+import os
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
 import chromadb
+
 import uuid
 
 # ---------- PAGE CONFIG ----------
