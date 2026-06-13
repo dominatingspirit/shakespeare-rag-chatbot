@@ -2,13 +2,19 @@ import streamlit as st
 from dotenv import load_dotenv
 load_dotenv()
 
-from groq import Groq
-from sentence_transformers import SentenceTransformer
 import os
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
-import chromadb
 
+# Use Streamlit Cloud secrets if available
+if "GROQ_API_KEY" in st.secrets:
+    os.environ["GROQ_API_KEY"] = st.secrets["GROQ_API_KEY"]
+
+from groq import Groq
+from sentence_transformers import SentenceTransformer
+import chromadb
 import uuid
+from gtts import gTTS
+import io
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(
@@ -54,7 +60,6 @@ st.markdown("""
         border-top: 1px solid #4a3c2c;
     }
 
-    /* Chat messages */
     [data-testid="stChatMessage"] {
         background-color: #241c15;
         border: 1px solid #3d3122;
@@ -66,17 +71,14 @@ st.markdown("""
         line-height: 1.6;
     }
 
-    /* User message accent */
     [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) {
         border-left: 3px solid #6b8e8e;
     }
 
-    /* Assistant message accent */
     [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) {
         border-left: 3px solid #d4af6a;
     }
 
-    /* Chat input */
     .stChatInput textarea {
         background-color: #241c15 !important;
         color: #e8dcc4 !important;
@@ -88,7 +90,6 @@ st.markdown("""
         color: #6b5d4a !important;
     }
 
-    /* Sidebar */
     [data-testid="stSidebar"] {
         background-color: #15110c;
         border-right: 1px solid #3d3122;
@@ -98,7 +99,6 @@ st.markdown("""
         color: #d4af6a !important;
     }
 
-    /* Buttons */
     .stButton button {
         background-color: #2a2018;
         color: #d4af6a;
@@ -115,7 +115,6 @@ st.markdown("""
         color: #f0e6d2;
     }
 
-    /* Spinner */
     .stSpinner > div {
         color: #d4af6a !important;
         font-style: italic;
@@ -157,16 +156,31 @@ def chat(user_input, history):
     )
     return response.choices[0].message.content
 
+def text_to_speech(text):
+    tts = gTTS(text=text, lang='en', tld='co.uk')  # British accent
+    audio_buffer = io.BytesIO()
+    tts.write_to_fp(audio_buffer)
+    audio_buffer.seek(0)
+    return audio_buffer
+
+def transcribe_audio(audio_bytes):
+    transcription = client.audio.transcriptions.create(
+        file=("audio.wav", audio_bytes),
+        model="whisper-large-v3",
+    )
+    return transcription.text
+
 # ---------- SESSION STATE SETUP ----------
-# 'conversations' = dict of {conversation_id: {"title": ..., "messages": [...]}}
 if "conversations" not in st.session_state:
     st.session_state.conversations = {}
 
 if "active_conversation" not in st.session_state:
-    # create a first conversation
     new_id = str(uuid.uuid4())
     st.session_state.conversations[new_id] = {"title": "New Conversation", "messages": []}
     st.session_state.active_conversation = new_id
+
+if "last_audio_hash" not in st.session_state:
+    st.session_state.last_audio_hash = None
 
 active_id = st.session_state.active_conversation
 active_conv = st.session_state.conversations[active_id]
@@ -184,7 +198,6 @@ with st.sidebar:
 
     st.markdown("---")
 
-    # List existing conversations (most recent first)
     for conv_id, conv in reversed(list(st.session_state.conversations.items())):
         label = conv["title"]
         if conv_id == active_id:
@@ -208,6 +221,9 @@ with st.sidebar:
         st.rerun()
 
     st.markdown("---")
+    enable_audio = st.checkbox("🔊 Enable voice narration")
+
+    st.markdown("---")
     st.caption("Suggested topics")
     st.markdown("""
     <small>
@@ -224,17 +240,36 @@ st.title("THE BARD'S CHAMBER")
 st.caption("Converse with William Shakespeare, drawn from his complete works")
 st.markdown("---")
 
-# Display messages for active conversation
+# Display past messages
 for msg in active_conv["messages"]:
     avatar = "🪶" if msg["role"] == "assistant" else "🧑"
     with st.chat_message(msg["role"], avatar=avatar):
         st.write(msg["content"])
+        if msg["role"] == "assistant" and enable_audio and "audio" in msg:
+            st.audio(msg["audio"], format="audio/mp3")
 
-# Chat input
-if user_input := st.chat_input("Speak thy mind..."):
+# ---------- VOICE INPUT ----------
+audio_value = st.audio_input("🎙️ Or speak thy question")
+
+transcribed_text = None
+if audio_value:
+    audio_bytes = audio_value.read()
+    audio_hash = hash(audio_bytes)
+
+    if st.session_state.last_audio_hash != audio_hash:
+        with st.spinner("Transcribing thy words..."):
+            transcribed_text = transcribe_audio(audio_bytes)
+            st.session_state.last_audio_hash = audio_hash
+
+# ---------- TEXT INPUT ----------
+typed_input = st.chat_input("Speak thy mind...")
+
+user_input = typed_input or transcribed_text
+
+# ---------- PROCESS INPUT ----------
+if user_input:
     active_conv["messages"].append({"role": "user", "content": user_input})
 
-    # Auto-title the conversation from the first message
     if active_conv["title"] == "New Conversation":
         active_conv["title"] = user_input[:30] + ("..." if len(user_input) > 30 else "")
 
@@ -246,5 +281,15 @@ if user_input := st.chat_input("Speak thy mind..."):
             response = chat(user_input, active_conv["messages"][:-1])
         st.write(response)
 
-    active_conv["messages"].append({"role": "assistant", "content": response})
+        audio_buffer = None
+        if enable_audio:
+            with st.spinner("Recording in the Bard's voice..."):
+                audio_buffer = text_to_speech(response)
+            st.audio(audio_buffer, format="audio/mp3")
+
+    new_msg = {"role": "assistant", "content": response}
+    if audio_buffer:
+        new_msg["audio"] = audio_buffer
+    active_conv["messages"].append(new_msg)
+
     st.rerun()

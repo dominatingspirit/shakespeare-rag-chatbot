@@ -4,8 +4,6 @@
 # Virtual environment
 .venv/
 
-# Vector database (large, regeneratable)
-vectorstore/
 
 # Python cache
 __pycache__/
